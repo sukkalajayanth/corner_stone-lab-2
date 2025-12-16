@@ -3,9 +3,10 @@
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
+#include <string.h>
 
 /*
- * Core debugger: single-step execution
+ * Core debugger: command loop with cont and step
  */
 
 int main(int argc, char *argv[]) {
@@ -26,11 +27,31 @@ int main(int argc, char *argv[]) {
         waitpid(child, &status, 0);
         printf("Debugger attached\n");
 
-        printf("Single stepping one instruction...\n");
-        ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
-        waitpid(child, &status, 0);
+        char cmd[64];
 
-        printf("Single step completed\n");
+        while (1) {
+            printf("dbg> ");
+            if (!fgets(cmd, sizeof(cmd), stdin))
+                break;
+
+            if (strncmp(cmd, "cont", 4) == 0) {
+                ptrace(PTRACE_CONT, child, NULL, NULL);
+                waitpid(child, &status, 0);
+                printf("Process continued\n");
+            }
+            else if (strncmp(cmd, "step", 4) == 0) {
+                ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
+                waitpid(child, &status, 0);
+                printf("Single step done\n");
+            }
+            else if (strncmp(cmd, "quit", 4) == 0) {
+                printf("Exiting debugger\n");
+                break;
+            }
+            else {
+                printf("Commands: cont, step, quit\n");
+            }
+        }
     }
 
     return 0;
