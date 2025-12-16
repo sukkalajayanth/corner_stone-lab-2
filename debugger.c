@@ -5,6 +5,8 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <string.h>
+#include <signal.h>
+
 
 typedef struct {
     long addr;
@@ -13,6 +15,19 @@ typedef struct {
 } breakpoint_t;
 
 breakpoint_t bp = {0};
+
+void print_status(int status) {
+    if (WIFEXITED(status)) {
+        printf("[STATUS] Process exited with code %d\n",
+               WEXITSTATUS(status));
+    } else if (WIFSTOPPED(status)) {
+        printf("[STATUS] Process stopped by signal %d",
+               WSTOPSIG(status));
+        if (WSTOPSIG(status) == SIGTRAP)
+            printf(" (SIGTRAP)");
+        printf("\n");
+    }
+}
 
 void set_breakpoint(pid_t pid, long addr) {
     long data = ptrace(PTRACE_PEEKTEXT, pid, (void*)addr, NULL);
@@ -30,7 +45,7 @@ void handle_breakpoint(pid_t pid) {
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 
-    regs.rip -= 1;  
+    regs.rip -= 1;
     ptrace(PTRACE_SETREGS, pid, NULL, &regs);
 
     ptrace(PTRACE_POKETEXT, pid,
@@ -39,7 +54,6 @@ void handle_breakpoint(pid_t pid) {
 
     printf("[*] Breakpoint hit\n");
     printf("RIP = 0x%llx\n", regs.rip);
-    printf("RAX = 0x%llx\n", regs.rax);
 }
 
 int main(int argc, char *argv[]) {
@@ -58,7 +72,7 @@ int main(int argc, char *argv[]) {
     } else {
         int status;
         waitpid(child, &status, 0);
-        printf("Debugger attached\n");
+        print_status(status);
 
         char cmd[64];
         while (1) {
@@ -74,13 +88,17 @@ int main(int argc, char *argv[]) {
             else if (strncmp(cmd, "cont", 4) == 0) {
                 ptrace(PTRACE_CONT, child, NULL, NULL);
                 waitpid(child, &status, 0);
+                print_status(status);
 
-                if (bp.enabled)
+                if (bp.enabled &&
+                    WIFSTOPPED(status) &&
+                    WSTOPSIG(status) == SIGTRAP)
                     handle_breakpoint(child);
             }
             else if (strncmp(cmd, "step", 4) == 0) {
                 ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
                 waitpid(child, &status, 0);
+                print_status(status);
             }
             else if (strncmp(cmd, "quit", 4) == 0) {
                 break;
