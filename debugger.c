@@ -7,9 +7,6 @@
 #include <string.h>
 #include <signal.h>
 
-/*
- * Minimal ptrace-based debugger
- */
 
 typedef struct {
     long addr;
@@ -19,12 +16,12 @@ typedef struct {
 
 breakpoint_t bp = {0};
 
-/* ---------- Process status ---------- */
 void print_status(int status) {
     if (WIFEXITED(status)) {
         printf("[STATUS] Process exited with code %d\n",
                WEXITSTATUS(status));
-    } else if (WIFSTOPPED(status)) {
+    } 
+    else if (WIFSTOPPED(status)) {
         printf("[STATUS] Process stopped by signal %d",
                WSTOPSIG(status));
         if (WSTOPSIG(status) == SIGTRAP)
@@ -33,8 +30,22 @@ void print_status(int status) {
     }
 }
 
-/* ---------- Breakpoints ---------- */
+void print_registers(pid_t pid) {
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+
+    printf("RIP = 0x%llx\n", regs.rip);
+    printf("RSP = 0x%llx  RBP = 0x%llx\n", regs.rsp, regs.rbp);
+    printf("RAX = 0x%llx  RBX = 0x%llx  RCX = 0x%llx\n",
+           regs.rax, regs.rbx, regs.rcx);
+}
+
 void set_breakpoint(pid_t pid, long addr) {
+    if (bp.enabled) {
+        printf("A breakpoint is already set. Clear it first.\n");
+        return;
+    }
+
     long data = ptrace(PTRACE_PEEKTEXT, pid, (void*)addr, NULL);
     bp.addr = addr;
     bp.orig_data = data;
@@ -46,22 +57,38 @@ void set_breakpoint(pid_t pid, long addr) {
     printf("[+] Breakpoint set at 0x%lx\n", addr);
 }
 
-void handle_breakpoint(pid_t pid) {
-    struct user_regs_struct regs;
-    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
-
-    regs.rip -= 1;   // fix RIP after INT3
-    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+void clear_breakpoint(pid_t pid) {
+    if (!bp.enabled) {
+        printf("No active breakpoint to clear\n");
+        return;
+    }
 
     ptrace(PTRACE_POKETEXT, pid,
            (void*)bp.addr, (void*)bp.orig_data);
+
+    bp.enabled = 0;
+    printf("[+] Breakpoint cleared\n");
+}
+
+void handle_breakpoint(pid_t pid) {
+    struct user_regs_struct regs;
+
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+
+    /* RIP points past INT3 → fix it */
+    regs.rip -= 1;
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+
+    /* Restore original instruction */
+    ptrace(PTRACE_POKETEXT, pid,
+           (void*)bp.addr, (void*)bp.orig_data);
+
     bp.enabled = 0;
 
     printf("[*] Breakpoint hit\n");
-    printf("RIP = 0x%llx\n", regs.rip);
+    print_registers(pid);
 }
 
-/* ---------- Main ---------- */
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <program>\n", argv[0]);
@@ -75,12 +102,14 @@ int main(int argc, char *argv[]) {
         execvp(argv[1], &argv[1]);
         perror("execvp");
         exit(1);
-    } else {
+    } 
+    else {
         int status;
         waitpid(child, &status, 0);
         print_status(status);
 
         char cmd[64];
+
         while (1) {
             printf("dbg> ");
             if (!fgets(cmd, sizeof(cmd), stdin))
@@ -88,8 +117,14 @@ int main(int argc, char *argv[]) {
 
             if (strncmp(cmd, "break", 5) == 0) {
                 long addr;
-                sscanf(cmd + 6, "%lx", &addr);
-                set_breakpoint(child, addr);
+                if (sscanf(cmd + 6, "%lx", &addr) != 1) {
+                    printf("Usage: break <hex_address>\n");
+                } else {
+                    set_breakpoint(child, addr);
+                }
+            }
+            else if (strncmp(cmd, "clear", 5) == 0) {
+                clear_breakpoint(child);
             }
             else if (strncmp(cmd, "cont", 4) == 0) {
                 ptrace(PTRACE_CONT, child, NULL, NULL);
@@ -105,12 +140,16 @@ int main(int argc, char *argv[]) {
                 ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
                 waitpid(child, &status, 0);
                 print_status(status);
+                print_registers(child);
+            }
+            else if (strncmp(cmd, "regs", 4) == 0) {
+                print_registers(child);
             }
             else if (strncmp(cmd, "quit", 4) == 0) {
                 break;
             }
             else {
-                printf("Commands: break <addr>, cont, step, quit\n");
+                printf("Commands: break <addr>, clear, cont, step, regs, quit\n");
             }
         }
     }
