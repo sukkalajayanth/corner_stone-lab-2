@@ -3,7 +3,9 @@
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
+#include <sys/user.h>
 #include <string.h>
+
 typedef struct {
     long addr;
     long orig_data;
@@ -22,6 +24,22 @@ void set_breakpoint(pid_t pid, long addr) {
     ptrace(PTRACE_POKETEXT, pid, (void*)addr, (void*)data_with_int3);
 
     printf("[+] Breakpoint set at 0x%lx\n", addr);
+}
+
+void handle_breakpoint(pid_t pid) {
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+
+    regs.rip -= 1;  
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+
+    ptrace(PTRACE_POKETEXT, pid,
+           (void*)bp.addr, (void*)bp.orig_data);
+    bp.enabled = 0;
+
+    printf("[*] Breakpoint hit\n");
+    printf("RIP = 0x%llx\n", regs.rip);
+    printf("RAX = 0x%llx\n", regs.rax);
 }
 
 int main(int argc, char *argv[]) {
@@ -56,6 +74,9 @@ int main(int argc, char *argv[]) {
             else if (strncmp(cmd, "cont", 4) == 0) {
                 ptrace(PTRACE_CONT, child, NULL, NULL);
                 waitpid(child, &status, 0);
+
+                if (bp.enabled)
+                    handle_breakpoint(child);
             }
             else if (strncmp(cmd, "step", 4) == 0) {
                 ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
