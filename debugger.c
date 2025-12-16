@@ -5,7 +5,7 @@
 #include <sys/wait.h>
 
 /*
- * Core debugger: process creation and ptrace attach
+ * Core debugger: continue execution
  */
 
 int main(int argc, char *argv[]) {
@@ -17,16 +17,19 @@ int main(int argc, char *argv[]) {
     pid_t child = fork();
 
     if (child == 0) {
-        // Child process (debuggee)
         ptrace(PTRACE_TRACEME, 0, NULL, NULL);
         execvp(argv[1], &argv[1]);
         perror("execvp");
         exit(1);
     } else {
-        // Parent process (debugger)
         int status;
         waitpid(child, &status, 0);
-        printf("Debugger attached to process %d\n", child);
+        printf("Debugger attached. Continuing execution...\n");
+
+        ptrace(PTRACE_CONT, child, NULL, NULL);
+        waitpid(child, &status, 0);
+
+        printf("Process stopped or exited\n");
     }
 
     return 0;
