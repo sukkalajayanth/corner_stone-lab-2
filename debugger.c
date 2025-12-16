@@ -5,7 +5,7 @@
 #include <sys/wait.h>
 
 /*
- * Core debugger: continue execution
+ * Core debugger: single-step execution
  */
 
 int main(int argc, char *argv[]) {
@@ -24,12 +24,13 @@ int main(int argc, char *argv[]) {
     } else {
         int status;
         waitpid(child, &status, 0);
-        printf("Debugger attached. Continuing execution...\n");
+        printf("Debugger attached\n");
 
-        ptrace(PTRACE_CONT, child, NULL, NULL);
+        printf("Single stepping one instruction...\n");
+        ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
         waitpid(child, &status, 0);
 
-        printf("Process stopped or exited\n");
+        printf("Single step completed\n");
     }
 
     return 0;
