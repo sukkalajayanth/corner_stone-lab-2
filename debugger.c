@@ -3,12 +3,65 @@
 #include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
+#include <sys/user.h>
 #include <string.h>
+#include <signal.h>
 
 /*
- * Core debugger: command loop with cont and step
+ * Minimal ptrace-based debugger
  */
 
+typedef struct {
+    long addr;
+    long orig_data;
+    int enabled;
+} breakpoint_t;
+
+breakpoint_t bp = {0};
+
+/* ---------- Process status ---------- */
+void print_status(int status) {
+    if (WIFEXITED(status)) {
+        printf("[STATUS] Process exited with code %d\n",
+               WEXITSTATUS(status));
+    } else if (WIFSTOPPED(status)) {
+        printf("[STATUS] Process stopped by signal %d",
+               WSTOPSIG(status));
+        if (WSTOPSIG(status) == SIGTRAP)
+            printf(" (SIGTRAP)");
+        printf("\n");
+    }
+}
+
+/* ---------- Breakpoints ---------- */
+void set_breakpoint(pid_t pid, long addr) {
+    long data = ptrace(PTRACE_PEEKTEXT, pid, (void*)addr, NULL);
+    bp.addr = addr;
+    bp.orig_data = data;
+    bp.enabled = 1;
+
+    long data_with_int3 = (data & ~0xff) | 0xcc;
+    ptrace(PTRACE_POKETEXT, pid, (void*)addr, (void*)data_with_int3);
+
+    printf("[+] Breakpoint set at 0x%lx\n", addr);
+}
+
+void handle_breakpoint(pid_t pid) {
+    struct user_regs_struct regs;
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+
+    regs.rip -= 1;   // fix RIP after INT3
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+
+    ptrace(PTRACE_POKETEXT, pid,
+           (void*)bp.addr, (void*)bp.orig_data);
+    bp.enabled = 0;
+
+    printf("[*] Breakpoint hit\n");
+    printf("RIP = 0x%llx\n", regs.rip);
+}
+
+/* ---------- Main ---------- */
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <program>\n", argv[0]);
@@ -25,31 +78,39 @@ int main(int argc, char *argv[]) {
     } else {
         int status;
         waitpid(child, &status, 0);
-        printf("Debugger attached\n");
+        print_status(status);
 
         char cmd[64];
-
         while (1) {
             printf("dbg> ");
             if (!fgets(cmd, sizeof(cmd), stdin))
                 break;
 
-            if (strncmp(cmd, "cont", 4) == 0) {
+            if (strncmp(cmd, "break", 5) == 0) {
+                long addr;
+                sscanf(cmd + 6, "%lx", &addr);
+                set_breakpoint(child, addr);
+            }
+            else if (strncmp(cmd, "cont", 4) == 0) {
                 ptrace(PTRACE_CONT, child, NULL, NULL);
                 waitpid(child, &status, 0);
-                printf("Process continued\n");
+                print_status(status);
+
+                if (bp.enabled &&
+                    WIFSTOPPED(status) &&
+                    WSTOPSIG(status) == SIGTRAP)
+                    handle_breakpoint(child);
             }
             else if (strncmp(cmd, "step", 4) == 0) {
                 ptrace(PTRACE_SINGLESTEP, child, NULL, NULL);
                 waitpid(child, &status, 0);
-                printf("Single step done\n");
+                print_status(status);
             }
             else if (strncmp(cmd, "quit", 4) == 0) {
-                printf("Exiting debugger\n");
                 break;
             }
             else {
-                printf("Commands: cont, step, quit\n");
+                printf("Commands: break <addr>, cont, step, quit\n");
             }
         }
     }
