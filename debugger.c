@@ -4,7 +4,6 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <string.h>
-
 typedef struct {
     long addr;
     long orig_data;
@@ -12,6 +11,18 @@ typedef struct {
 } breakpoint_t;
 
 breakpoint_t bp = {0};
+
+void set_breakpoint(pid_t pid, long addr) {
+    long data = ptrace(PTRACE_PEEKTEXT, pid, (void*)addr, NULL);
+    bp.addr = addr;
+    bp.orig_data = data;
+    bp.enabled = 1;
+
+    long data_with_int3 = (data & ~0xff) | 0xcc;
+    ptrace(PTRACE_POKETEXT, pid, (void*)addr, (void*)data_with_int3);
+
+    printf("[+] Breakpoint set at 0x%lx\n", addr);
+}
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -37,7 +48,12 @@ int main(int argc, char *argv[]) {
             if (!fgets(cmd, sizeof(cmd), stdin))
                 break;
 
-            if (strncmp(cmd, "cont", 4) == 0) {
+            if (strncmp(cmd, "break", 5) == 0) {
+                long addr;
+                sscanf(cmd + 6, "%lx", &addr);
+                set_breakpoint(child, addr);
+            }
+            else if (strncmp(cmd, "cont", 4) == 0) {
                 ptrace(PTRACE_CONT, child, NULL, NULL);
                 waitpid(child, &status, 0);
             }
@@ -49,7 +65,7 @@ int main(int argc, char *argv[]) {
                 break;
             }
             else {
-                printf("Commands: cont, step, quit\n");
+                printf("Commands: break <addr>, cont, step, quit\n");
             }
         }
     }
