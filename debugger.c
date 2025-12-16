@@ -7,6 +7,9 @@
 #include <string.h>
 #include <signal.h>
 
+/*
+ * Minimal ptrace-based debugger
+ */
 
 typedef struct {
     long addr;
@@ -16,6 +19,7 @@ typedef struct {
 
 breakpoint_t bp = {0};
 
+/* ---------- Process status ---------- */
 void print_status(int status) {
     if (WIFEXITED(status)) {
         printf("[STATUS] Process exited with code %d\n",
@@ -29,6 +33,7 @@ void print_status(int status) {
     }
 }
 
+/* ---------- Breakpoints ---------- */
 void set_breakpoint(pid_t pid, long addr) {
     long data = ptrace(PTRACE_PEEKTEXT, pid, (void*)addr, NULL);
     bp.addr = addr;
@@ -45,7 +50,7 @@ void handle_breakpoint(pid_t pid) {
     struct user_regs_struct regs;
     ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 
-    regs.rip -= 1;
+    regs.rip -= 1;   // fix RIP after INT3
     ptrace(PTRACE_SETREGS, pid, NULL, &regs);
 
     ptrace(PTRACE_POKETEXT, pid,
@@ -56,6 +61,7 @@ void handle_breakpoint(pid_t pid) {
     printf("RIP = 0x%llx\n", regs.rip);
 }
 
+/* ---------- Main ---------- */
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <program>\n", argv[0]);
